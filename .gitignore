@@ -4,3 +4,5 @@
 *.aux
 *.glob
 Makefile.coq
+Makefile.coq.conf
+.coqdeps.d
