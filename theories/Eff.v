@@ -4,6 +4,10 @@ Require Import Coq.Classes.Morphisms.
 Require Import Coq.Classes.RelationClasses.
 Require Import Setoid.
 
+Require Import ExtLib.Data.HList.
+Require Import ExtLib.Data.Fin.
+Require Import Interaction.FinGet.
+
 Section Eff.
   Polymorphic Universes u u'.
   Variable eff : Type@{u} -> Type@{u'}.
@@ -68,17 +72,44 @@ Section Eff.
     | delayF v => delay (bind v k)
     end.
 
+  Lemma bind_ret : forall {T U} (x : T) (k : T -> Eff U),
+      bind (ret x) k = k x.
+  Proof.
+    intros. rewrite getEff_eq at 1. simpl.
+    destruct (k x); destruct e; reflexivity.
+  Defined.
+
+  Lemma bind_delay : forall {T U} (x : Eff T) (k : T -> Eff U),
+      bind (delay x) k = delay (bind x k).
+  Proof.
+    intros. rewrite getEff_eq at 1. simpl.
+    reflexivity.
+  Defined.
+
+  Lemma bind_interactd : forall {T U V} (e : eff T) (k' : T -> Eff U) (k : U -> Eff V),
+      bind (interact e k') k = interact e (fun x => bind (k' x) k).
+  Proof.
+    intros. rewrite getEff_eq at 1. simpl.
+    reflexivity.
+  Defined.
+
   Lemma delayBind_ret : forall {T U} v (k : T -> Eff U),
       delayBind (ret v) k = delay (k v).
-  Proof. Admitted.
+  Proof.
+    intros. rewrite getEff_eq at 1. reflexivity.
+  Defined.
 
   Lemma delayBind_delay : forall {T U} (v : Eff T) (k : T -> Eff U),
-      delayBind (delay v) k = bind v k.
-  Proof. Admitted.
+      delayBind (delay v) k = delay (bind v k).
+  Proof.
+    intros. rewrite getEff_eq at 1. reflexivity.
+  Defined.
 
   Lemma delayBind_interact : forall {T U V} e (k : T -> Eff U) (k' : U -> Eff V),
       delayBind (interact e k) k' = interact e (fun x => bind (k x) k').
-  Proof. Admitted.
+  Proof.
+    intros. rewrite getEff_eq at 1. reflexivity.
+  Defined.
 
   (* I should use paco to define this *)
   CoInductive Eff_eq {T} : Eff T -> Eff T -> Prop :=
@@ -235,21 +266,8 @@ End inj.
 Arguments injL {_} _ {_} _.
 Arguments injR {_ _} _ _.
 
-(* the empty effect *)
-Section nothingE.
-  Inductive nothing : Type -> Type := .
-End nothingE.
 
-(* the output effect *)
-Section outputE.
-  Variable t : Type.
-  Inductive out : Type -> Type :=
-  | outE : t -> out t.
-End outputE.
-
-Arguments outE {_} _.
-
-(* the fixpoint effect *)
+(* the (value-level) fixpoint effect, this implements value-recursion *)
 Section Fix.
 
   Variable a : Type.
@@ -302,16 +320,14 @@ End Fix.
 
 Arguments mfix {_} _.
 
-
 Section FixF.
+  Variable eff : Type -> Type.
 
   Variable a : Type.
   Variable b : a -> Type.
 
   Inductive fixpointF : Type -> Type :=
   | callF : forall x : a, fixpointF (b x).
-
-  Variable eff : Type -> Type.
 
   Section mfix.
     Variable f : forall x : a, Eff (both eff fixpointF) (b x).
@@ -331,10 +347,10 @@ Section FixF.
       | delayF x => delay (finterpF x)
       end.
 
-    Definition mfixF (x : a) : Eff eff (b x) := finterpF (f x).
+    Definition mfixF (x : a) : Eff eff (b x) :=
+      finterpF (f x).
 
-    Definition goF
-               T (X : both eff fixpointF T) : Eff eff T :=
+    Definition goF T (X : both eff fixpointF T) : Eff eff T :=
       match X with
       | bleft e => interact e ret
       | bright f0 =>
@@ -344,25 +360,99 @@ Section FixF.
       end.
 
     Theorem mfixF_unfold : forall x,
-      mfixF x = interp goF (f x).
-    Proof. Admitted.
+      Eff_eq _ (mfixF x) (interp goF (f x)).
+    Proof.
+      unfold mfixF.
+      intros.
+      generalize (f x).
+      cofix rec.
+      intro. rewrite getEff_eq. symmetry. rewrite getEff_eq. symmetry.
+      simpl.
+      destruct (getEff e); simpl.
+      - reflexivity.
+      - destruct b0; simpl.
+        + constructor.
+          intro. rewrite bind_ret.
+          rewrite rec. reflexivity.
+
+
+    Admitted.
 
   End mfix.
 
-  Theorem mfixF_ret : forall v x, mfixF (fun x => ret (v x)) x = ret (v x).
+  Theorem mfixF_ret : forall v x,
+      mfixF (fun x => ret (v x)) x = ret (v x).
   Proof. Admitted.
 
 End FixF.
 
-
 Arguments callF {_ _} _.
 
+Section mutual_fixpoints.
+  Record ftype : Type :=
+  { dom : Type
+  ; codom : dom -> Type }.
+  Definition ftypeD (eff : Type -> Type) (ft : ftype) : Type :=
+    forall x : ft.(dom), Eff eff (ft.(codom) x).
+
+  Context {eff : Type -> Type}.
+
+  Context {ts : list ftype}.
+  Variable fs :
+    forall recs, hlist (ftypeD (both eff recs)) ts ->
+            hlist (fun ab : ftype => ftypeD (both eff recs) ab) ts.
+  Variable which : fin (length ts).
+
+  Local Definition mdom := {x0 : fin (length ts) & dom (fin_get x0)}.
+  Local Definition mcodom :=
+   fun x0 : {x0 : fin (length ts) & dom (fin_get x0)} =>
+   let ft := fin_get (projT1 x0) in codom ft (projT2 x0).
+
+  Local Definition recs : hlist (ftypeD (both eff (fixpointF mdom mcodom))) ts.
+  refine (hlist_map
+     (fun (x0 : ftype) (H : {f : fin (length ts) | fin_get f = x0}) =>
+      let (x1, e) := H in
+      eq_rect (fin_get x1)
+        (fun x2 : ftype => ftypeD (both eff (fixpointF mdom mcodom)) x2)
+        (fun x2 : dom (fin_get x1) =>
+         interact
+           (bright
+              (callF
+                 (existT (fun x3 : fin (length ts) => dom (fin_get x3)) x1 x2)))
+           ret) x0 e) (hlist_fins ts)).
+  Defined.
+
+
+  Definition mmfixF : ftypeD eff (fin_get which).
+  refine (fun x =>
+            let fs := fs _ recs in
+            @mfixF eff mdom mcodom
+                   (fun '(@existT _ _ tagF x) => @fin_get_hlist _ _ _ fs tagF x)
+                   (@existT _ _ which x)
+         ).  Show Proof.
+  Defined.
+
+End mutual_fixpoints.
+
+(* the empty effect *)
+Section nothingE.
+  Inductive nothing : Type -> Type := .
+End nothingE.
+
+(* the output effect *)
+Section outputE.
+  Variable t : Type.
+  Inductive out : Type -> Type :=
+  | outE : t -> out t.
+End outputE.
+
+Arguments outE {_} _.
+
+
 (* mfix Demo *)
-(* This doesn't work due to universes, it looks like you need a separate
-   fixpoint operator for functions.
- *)
+Arguments mfixF {_} [_] _ _ _.
 Definition count_up : Eff (out nat) False :=
-  mfixF nat (fun _ : nat => False) (out nat)
+  mfixF (fun _ : nat => False)
         (fun n : nat =>
            interact (bleft (outE n))
                     (fun _ : nat => interact (bright (callF (n + 1))) ret)) 0.
@@ -424,4 +514,4 @@ Goal Eff_eq _ trial (diverge _).
   rewrite interp_interact. simpl go.
   change (mfix nothing (interact (bright (Top.rec False)) ret)) with trial.
   rewrite rec. rewrite delayBind_diverge. rewrite bind_diverge. reflexivity.
-Admitted. (* need to do paco reasoning *)
+Admitted. (* need to do paco reasoning? *)
