@@ -4,6 +4,8 @@ Require Import Coq.Classes.Morphisms.
 Require Import Coq.Classes.RelationClasses.
 Require Import Setoid.
 
+Require Import Paco.paco3.
+
 Require Import ExtLib.Data.HList.
 Require Import ExtLib.Data.Fin.
 Require Import Interaction.FinGet.
@@ -16,11 +18,14 @@ Section Eff.
   | retF (_ : T)
   | interactF {A : Type@{u}} (_ : eff A) (_ : A -> Eff)
   | delayF (_ : Eff).
+  (* todo: does it make sense for `delay` to be in the definition of `Eff` ? *)
 
   Arguments retF {_ _} _.
   Arguments interactF {_ _ _} _ _.
   Arguments delayF {_ _} _.
 
+  (* todo: rename to `coEff` *)
+  (* todo: make an inductive version to represent terminating programs. *)
   CoInductive Eff (T : Type@{u}) : Type@{u'} :=
   | do (_ : EffF (Eff T) T).
 
@@ -111,27 +116,247 @@ Section Eff.
     intros. rewrite getEff_eq at 1. reflexivity.
   Defined.
 
-  (* I should use paco to define this *)
-  CoInductive Eff_eq {T} : Eff T -> Eff T -> Prop :=
-  | eq_ret : forall t, Eff_eq (ret t) (ret t)
-  | eq_interact : forall a (e : eff a) k1 k2,
-      (forall x, Eff_eq (k1 x) (k2 x)) ->
-      Eff_eq (interact e k1) (interact e k2)
-  | eq_delay : forall a b, Eff_eq a b ->
-                      Eff_eq (delay a) (delay b).
+  (* Equivalence, including stuttering steps *)
+  Section Eff_eq.
 
-  CoInductive Eff_sim {T} : Eff T -> Eff T -> Prop :=
-  | sim_ret : forall t, Eff_sim (ret t) (ret t)
-  | sim_interact : forall a (e : eff a) k1 k2,
-      (forall x, Eff_sim (k1 x) (k2 x)) ->
-      Eff_sim (interact e k1) (interact e k2)
-  | sim_delay : forall a b, Eff_sim a b ->
-                       Eff_sim (delay a) (delay b).
+    Inductive Eff_eqF (eff_eq : forall T, Eff T -> Eff T -> Prop) {T}
+    : Eff T -> Eff T -> Prop :=
+    | eq_ret : forall t, Eff_eqF eff_eq (ret t) (ret t)
+    | eq_interact : forall a (e : eff a) k1 k2,
+        (forall x, eff_eq _ (k1 x) (k2 x)) ->
+        Eff_eqF eff_eq (interact e k1) (interact e k2)
+    | eq_delay : forall a b, eff_eq _ a b ->
+                        Eff_eqF eff_eq (delay a) (delay b).
 
-  Global Instance Reflexive_Eff_eq {T} : Reflexive (@Eff_eq T).
-  Admitted.
-  Global Instance Symmetric_Eff_eq {T} : Symmetric (@Eff_eq T).
-  Admitted.
+    Lemma Eff_eqF_mon: monotone3 Eff_eqF.
+    Proof.
+      red. intros.
+      destruct IN; try econstructor; eauto.
+    Qed.
+    Hint Resolve Eff_eqF_mon : paco.
+
+    Definition Eff_eq : forall {T}, Eff T -> Eff T -> Prop :=
+      paco3 Eff_eqF bot3.
+
+    Global Instance Reflexive_Eff_eq {T} : Reflexive (@Eff_eq T).
+    Proof.
+      red.
+      pcofix rec.
+      intros. pfold.
+      destruct x. destruct e; simpl; constructor.
+      intros. right. eapply rec.
+      right. eapply rec.
+    Defined.
+
+    Global Instance Symmetric_Eff_eq {T} : Symmetric (@Eff_eq T).
+    Proof.
+      red. pcofix rec.
+      intros. pfold.
+      punfold H0.
+      inversion_clear H0.
+      - constructor.
+      - constructor.
+        intros. specialize (H x0).
+        destruct H.
+        { eapply rec in H. right. assumption. }
+        { destruct H. }
+      - constructor.
+        destruct H.
+        { apply rec in H. right; assumption. }
+        { destruct H. }
+    Qed.
+
+    Lemma Eff_eqF_inj_interact : forall {T U} rel e (k : T -> Eff U) z,
+        Eff_eqF rel (interact e k) z ->
+        exists k', z = interact e k' /\ (forall x, rel _ (k x) (k' x)).
+    Proof.
+      intros.
+      refine match H in Eff_eqF _ X Z
+                   return match X return Prop with
+                          | do (interactF e k) => _
+                          | do _ => True
+                          end
+             with
+             | eq_ret _ _ => I
+             | eq_interact _ _ _ _ _ _ => _
+             | eq_delay _ _ _ _ => I
+             end; simpl.
+      eexists; split. reflexivity. assumption.
+    Defined.
+
+    Global Instance Transitive_Eff_eq {T} : Transitive (@Eff_eq T).
+    Proof.
+      red. pcofix rec.
+      intros. pfold. punfold H0; punfold H1.
+      inversion H0; clear H0; subst.
+      - inversion H1; clear H1; subst.
+        constructor.
+      - eapply Eff_eqF_inj_interact in H1. destruct H1 as [ ? [ ? ? ] ].
+        subst.
+        constructor. intros.
+        specialize (H x0). specialize (H1 x0).
+        destruct H1 as [ | [ ] ].
+        destruct H as [ | [ ] ].
+        right. eapply rec; eassumption.
+      - inversion H1; clear H1; subst.
+        constructor.
+        destruct H as [ | [] ].
+        destruct H2 as [ | [] ].
+        right; eapply rec; eassumption.
+    Defined.
+
+  End Eff_eq.
+
+  (* Equivalence, excluding stuttering *)
+  Section Eff_sim.
+    Variable rel_eff : forall {T}, eff T -> eff T -> Prop.
+
+    Section Eff_simF.
+      Variable (eff_sim : forall T, Eff T -> Eff T -> Prop).
+
+      Inductive Eff_simF {T} : Eff T -> Eff T -> Prop :=
+      | sim_ret : forall t, Eff_simF (ret t) (ret t)
+      | sim_interact : forall a (e1 e2 : eff a) k1 k2,
+          rel_eff _ e1 e2 ->
+          (forall x, eff_sim _ (k1 x) (k2 x)) ->
+          Eff_simF (interact e1 k1) (interact e2 k2)
+      | sim_delayL : forall a b, eff_sim _ a b ->
+                            Eff_simF (delay a) b
+      | sim_delayR : forall a b, eff_sim _ a b ->
+                            Eff_simF a (delay b)
+      .
+      (* todo: this doesn't work, because it relates everything to
+       * divergence. We need to express the fact that we can skip a
+       * finite number of steps.
+       *)
+
+    End Eff_simF.
+
+    Lemma Eff_simF_mon: monotone3 Eff_simF.
+    Proof.
+      red. intros.
+      destruct IN; try econstructor; eauto.
+    Qed.
+    Hint Resolve Eff_simF_mon : paco.
+
+    Definition Eff_sim : forall {T}, Eff T -> Eff T -> Prop :=
+      paco3 Eff_simF bot3.
+
+    Hypothesis Refl_rel_eff : forall {T}, Reflexive (@rel_eff T).
+
+    Global Instance Reflexive_Eff_sim {T} : Reflexive (@Eff_sim T).
+    Proof.
+      red.
+      pcofix rec.
+      intros. pfold.
+      destruct x; destruct e; simpl.
+      - constructor.
+      - constructor. reflexivity.
+        right. eapply rec.
+      - constructor.
+        left. pfold. constructor. right. eauto.
+    Defined.
+
+    Hypothesis Sym_rel_eff : forall {T}, Symmetric (@rel_eff T).
+
+    Global Instance Symmetric_Eff_sim {T} : Symmetric (@Eff_sim T).
+    Proof using Sym_rel_eff.
+      red. pcofix rec.
+      intros. pfold.
+      punfold H0.
+      inversion_clear H0.
+      - constructor.
+      - constructor.
+        + symmetry. assumption.
+        + intros. specialize (H1 x0).
+          destruct H1 as [ | [] ].
+          right. eapply rec. assumption.
+      - constructor.
+        destruct H as [ | [] ].
+        right; eapply rec; eassumption.
+      - constructor.
+        destruct H as [ | [] ].
+        right; eapply rec; eassumption.
+    Defined.
+
+    Lemma Eff_simF_inj_interact : forall {T U} rel e (k : T -> Eff U) z,
+        Eff_simF rel (interact e k) z ->
+          (exists e' k', z = interact e' k' /\
+                    rel_eff _ e e' /\
+                    (forall x, rel _ (k x) (k' x)))
+       \/ (exists z', z = delay z' /\ rel _ (interact e k) z').
+    Proof.
+      intros.
+      refine match H in Eff_simF _ X Z
+                   return match X return Prop with
+                          | do (interactF e k) => _
+                          | do _ => True
+                          end
+             with
+             | sim_ret _ _ => I
+             | sim_interact _ _ _ _ _ _ _ _ => _
+             | sim_delayL _ _ _ _ => I
+             | sim_delayR _ _ _ _ => _
+             end; simpl.
+      - left. do 2 eexists. split; [ reflexivity | split; eauto ].
+      - destruct e0. destruct e0; auto.
+        right. eexists; split; eauto.
+    Defined.
+
+    Hypothesis Trans_rel_eff : forall {T}, Transitive (@rel_eff T).
+
+    Global Instance Transitive_Eff_sim {T} : Transitive (@Eff_sim T).
+    Proof using Trans_rel_eff.
+      red. pcofix rec.
+      destruct x; destruct e; simpl; intros.
+      - admit.
+      - 
+
+
+      intros. pfold. punfold H0.
+      inversion H0; clear H0; subst.
+      - punfold H1; inversion H1; clear H1; subst.
+        + constructor.
+        + constructor.
+          destruct H as [ | [] ].
+          right. eapply rec. eapply H. reflexivity.
+      - punfold H1. eapply Eff_simF_inj_interact in H1.
+        destruct H1.
+        + destruct H0 as [ ? [ ? [ ? [ ? ? ] ] ] ].
+          subst.
+          constructor.
+          * etransitivity; eassumption.
+          * intros.
+            specialize (H3 x1); specialize (H2 x1).
+            destruct H3 as [ | [] ].
+            destruct H2 as [ | [] ].
+            right; eapply rec; eassumption.
+        + destruct H0 as [ ? [ ? ? ] ].
+          subst. constructor.
+          destruct H1 as [ | [] ].
+          right. eapply rec; [ | eassumption ].
+          pfold. constructor. assumption. eapply H2.
+      - constructor.
+        right. eapply rec.
+        destruct H as [ | [] ].
+        eapply p.
+        eassumption.
+      - eapply paco3_unfold in H1; eauto with paco.
+        inversion H1; clear H1; subst.
+        + destruct H as [ | [] ].
+          destruct H2 as [ | [] ].
+          specialize (rec _ _ _ H H0).
+          
+        right. eapply rec.
+        destruct H as [ | [] ].
+        eapply p.
+        eassumption.
+    Defined.
+
+
+
+
+
   Global Instance Transitive_Eff_eq {T} : Transitive (@Eff_eq T).
   Admitted.
 
