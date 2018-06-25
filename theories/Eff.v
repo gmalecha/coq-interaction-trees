@@ -211,6 +211,19 @@ Section Eff.
   Section Eff_sim.
     Variable rel_eff : forall {T}, eff T -> eff T -> Prop.
 
+    Definition notDelay {T} (c : Eff T) : Prop :=
+      match c with
+      | do (delayF _) => False
+      | _ => True
+      end.
+
+    Inductive DropDelay {T} : Eff T -> Eff T -> Prop :=
+    | drop_delay : forall x y, DropDelay x y -> DropDelay (delay x) y
+    | drop_no_delay : forall x, notDelay x -> DropDelay x x.
+
+    CoInductive DelaysForever {T} : Eff T -> Prop :=
+    | forever_delay : forall e, DelaysForever e -> DelaysForever (delay e).
+
     Section Eff_simF.
       Variable (eff_sim : forall T, Eff T -> Eff T -> Prop).
 
@@ -220,22 +233,31 @@ Section Eff.
           rel_eff _ e1 e2 ->
           (forall x, eff_sim _ (k1 x) (k2 x)) ->
           Eff_simF (interact e1 k1) (interact e2 k2)
-      | sim_delayL : forall a b, eff_sim _ a b ->
-                            Eff_simF (delay a) b
-      | sim_delayR : forall a b, eff_sim _ a b ->
-                            Eff_simF a (delay b)
-      .
-      (* todo: this doesn't work, because it relates everything to
-       * divergence. We need to express the fact that we can skip a
-       * finite number of steps.
+      (* note that we have to drop *all* delays in order to ensure that
+       * we don't relate all programs to divergence.
        *)
+      | sim_delay : forall a a' b,
+          DropDelay (delay a) a' ->
+          eff_sim _ a' b ->
+          Eff_simF (delay a) b
+      | sim_delayR : forall a b b',
+          DropDelay (delay b) b' ->
+          eff_sim _ a b' ->
+          Eff_simF a (delay b)
+      (* in order to preserve reflexivity of the relation, we need to
+       * relate forever delaying programs to themselves.
+       *)
+      | sim_delay_forever : forall a b,
+          DelaysForever a -> DelaysForever b ->
+          Eff_simF (delay a) (delay b)
+      .
 
     End Eff_simF.
 
     Lemma Eff_simF_mon: monotone3 Eff_simF.
     Proof.
       red. intros.
-      destruct IN; try econstructor; eauto.
+      destruct IN; try solve [ econstructor; eauto ].
     Qed.
     Hint Resolve Eff_simF_mon : paco.
 
@@ -310,7 +332,7 @@ Section Eff.
       red. pcofix rec.
       destruct x; destruct e; simpl; intros.
       - admit.
-      - 
+      -
 
 
       intros. pfold. punfold H0.
@@ -346,7 +368,7 @@ Section Eff.
         + destruct H as [ | [] ].
           destruct H2 as [ | [] ].
           specialize (rec _ _ _ H H0).
-          
+
         right. eapply rec.
         destruct H as [ | [] ].
         eapply p.
