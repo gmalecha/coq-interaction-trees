@@ -205,7 +205,101 @@ Section Eff.
         right; eapply rec; eassumption.
     Defined.
 
+    Global Instance Proper_bind' {T U}
+    : Proper (pointwise_relation T (@Eff_eq U) ==> @Eff_eq T ==> (@Eff_eq U))
+             bind'.
+    Proof.
+      red. red. red.
+      pcofix rec; intros.
+      punfold H1. pfold.
+      rewrite getEff_eq. rewrite getEff_eq at 1.
+      inversion_clear H1.
+      - simpl.
+        specialize (H0 t).
+        punfold H0.
+        inversion H0; clear H0; subst.
+        + constructor.
+        + constructor.
+          intro x1. specialize (H2 x1).
+          destruct H2 as [ | [] ].
+          left. eapply paco3_mon. eapply H0.
+          inversion 1.
+        + simpl. constructor.
+          destruct H2 as [ | [] ].
+          left. eapply paco3_mon. eapply H0.
+          inversion 1.
+      - simpl. constructor. intros.
+        right.
+        eapply (rec x y H0 (k1 x1) (k2 x1)).
+        specialize (H x1). destruct H as [ | [] ].
+        eapply H.
+      - simpl. constructor.
+        intros.
+        right.
+        eapply (rec _ _ H0).
+        destruct H as [ | [] ]. apply H.
+    Defined.
+
+    Global Instance Proper_bind {T U}
+    : Proper (@Eff_eq T ==> pointwise_relation T (@Eff_eq U) ==> (@Eff_eq U))
+             bind.
+    Proof.
+      do 3 red. intros. eapply Proper_bind'; eauto.
+    Defined.
+
+    Global Instance Proper_delayBind {T U}
+    : Proper (@Eff_eq T ==> pointwise_relation T (@Eff_eq U) ==> (@Eff_eq U))
+             delayBind.
+    Proof.
+      red. red. red. intros.
+      rewrite getEff_eq. rewrite getEff_eq at 1.
+      pinversion H.
+      - simpl. pfold. constructor.
+        left. eapply H0.
+      - simpl. pfold. constructor.
+        intros.
+        specialize (H1 x1).
+        destruct H1 as [ | [] ].
+        left.
+        eapply Proper_bind. eapply H1. eapply H0.
+      - simpl. pfold. constructor.
+        left.
+        eapply Proper_bind. eapply H1. eapply H0.
+    Defined.
+
+    Global Instance Proper_delay {T}
+    : Proper (@Eff_eq T ==> @Eff_eq T) delay.
+    Proof.
+      do 2 red.
+      intros.
+      pfold. constructor. left; eapply H.
+    Defined.
+
+    Theorem bind_bind : forall {T U V} c (k : T -> Eff U) (k' : U -> Eff V),
+        Eff_eq (bind (bind c k) k')(bind c (fun x => bind (k x) k')).
+    Proof.
+      pcofix rec.
+      intros.
+      rewrite getEff_eq.
+      rewrite getEff_eq at 1. simpl.
+      destruct (getEff c).
+      - destruct (k t); destruct e.
+        + simpl. eapply paco3_mon.
+          eapply Reflexive_Eff_eq. inversion 1.
+        + simpl. eapply paco3_mon.
+          eapply Reflexive_Eff_eq. inversion 1.
+        + simpl. eapply paco3_mon.
+          eapply Reflexive_Eff_eq. inversion 1.
+      - simpl. pfold. constructor; intros.
+        right.
+        eapply (rec _ _ _ (e0 x) k k').
+      - simpl. pfold. constructor.
+        right. eapply (rec _ _ _ e k k').
+    Defined.
+
   End Eff_eq.
+
+  Hint Resolve Eff_eqF_mon : paco.
 
   (* Equivalence, excluding stuttering *)
   Section Eff_sim.
@@ -218,11 +312,8 @@ Section Eff.
       end.
 
     Inductive DropDelay {T} : Eff T -> Eff T -> Prop :=
-    | drop_delay : forall x y, DropDelay x y -> DropDelay (delay x) y
-    | drop_no_delay : forall x, notDelay x -> DropDelay x x.
-
-    CoInductive DelaysForever {T} : Eff T -> Prop :=
-    | forever_delay : forall e, DelaysForever e -> DelaysForever (delay e).
+    | drop_last : forall x, notDelay x -> DropDelay (delay x) x
+    | drop_then : forall x y, DropDelay x y -> DropDelay (delay x) y.
 
     Section Eff_simF.
       Variable (eff_sim : forall T, Eff T -> Eff T -> Prop).
@@ -236,21 +327,25 @@ Section Eff.
       (* note that we have to drop *all* delays in order to ensure that
        * we don't relate all programs to divergence.
        *)
-      | sim_delay : forall a a' b,
-          DropDelay (delay a) a' ->
+      | sim_delayL : forall a a' b,
+          DropDelay a a' ->
+          notDelay b ->
           eff_sim _ a' b ->
-          Eff_simF (delay a) b
+          Eff_simF a b
       | sim_delayR : forall a b b',
-          DropDelay (delay b) b' ->
+          notDelay a ->
+          DropDelay b b' ->
           eff_sim _ a b' ->
-          Eff_simF a (delay b)
+          Eff_simF a b
       (* in order to preserve reflexivity of the relation, we need to
-       * relate forever delaying programs to themselves.
+       * relate programs that delay forever to themselves.
        *)
-      | sim_delay_forever : forall a b,
-          DelaysForever a -> DelaysForever b ->
+      | sim_delay_both : forall a b,
+          eff_sim _ a b ->
           Eff_simF (delay a) (delay b)
       .
+
+      (* attribution: the phrasing of delay is based on the vellvm semantics. *)
 
     End Eff_simF.
 
@@ -275,8 +370,7 @@ Section Eff.
       - constructor.
       - constructor. reflexivity.
         right. eapply rec.
-      - constructor.
-        left. pfold. constructor. right. eauto.
+      - constructor. right. auto.
     Defined.
 
     Hypothesis Sym_rel_eff : forall {T}, Symmetric (@rel_eff T).
@@ -293,8 +387,11 @@ Section Eff.
         + intros. specialize (H1 x0).
           destruct H1 as [ | [] ].
           right. eapply rec. assumption.
-      - constructor.
-        destruct H as [ | [] ].
+      - eapply sim_delayR; [ eassumption | eassumption | ].
+        destruct H2 as [ | [] ].
+        right; eapply rec; eassumption.
+      - eapply sim_delayL; [ eassumption | eassumption | ].
+        destruct H2 as [ | [] ].
         right; eapply rec; eassumption.
       - constructor.
         destruct H as [ | [] ].
@@ -302,12 +399,14 @@ Section Eff.
     Defined.
 
     Lemma Eff_simF_inj_interact : forall {T U} rel e (k : T -> Eff U) z,
-        Eff_simF rel (interact e k) z ->
-          (exists e' k', z = interact e' k' /\
-                    rel_eff _ e e' /\
-                    (forall x, rel _ (k x) (k' x)))
-       \/ (exists z', z = delay z' /\ rel _ (interact e k) z').
-    Proof.
+       Eff_simF rel (interact e k) z ->
+         (exists e' k', z = interact e' k' /\
+                   rel_eff _ e e' /\
+                   (forall x, rel _ (k x) (k' x)))
+       \/ (exists e' k', DropDelay z (interact e' k') /\
+                   rel_eff _ e e' /\
+                   (forall x, rel _ (k x) (k' x))).
+    Proof. (*
       intros.
       refine match H in Eff_simF _ X Z
                    return match X return Prop with
@@ -317,21 +416,31 @@ Section Eff.
              with
              | sim_ret _ _ => I
              | sim_interact _ _ _ _ _ _ _ _ => _
-             | sim_delayL _ _ _ _ => I
-             | sim_delayR _ _ _ _ => _
+             | sim_delayL _ _ _ _ _ _ _ => _
+             | sim_delayR _ _ _ _ _ _ _ => _
+             | sim_delay_both _ _ _ _ => I
              end; simpl.
       - left. do 2 eexists. split; [ reflexivity | split; eauto ].
-      - destruct e0. destruct e0; auto.
-        right. eexists; split; eauto.
-    Defined.
+      - inversion d; exact I.
+      - destruct e0; destruct e0; try exact I.
+        right. induction d.
+        + exists e0; exists e3.
+
+        + destruct IHd; eauto. destruct H0; subst.
+          eexists. split. reflexivity.
+
+          Defined.
+*)
+    Admitted.
 
     Hypothesis Trans_rel_eff : forall {T}, Transitive (@rel_eff T).
 
     Global Instance Transitive_Eff_sim {T} : Transitive (@Eff_sim T).
     Proof using Trans_rel_eff.
+(*
       red. pcofix rec.
       destruct x; destruct e; simpl; intros.
-      - admit.
+      - pfold. punfold H0.
       -
 
 
@@ -374,13 +483,27 @@ Section Eff.
         eapply p.
         eassumption.
     Defined.
+*)
+    Admitted.
 
+    Global Instance Subrelation_Eff_sim_Eff_eq {T}
+    : subrelation (@Eff_eq T) (@Eff_sim T).
+    Proof using Refl_rel_eff.
+      red. pcofix rec.
+      intros.
+      punfold H0.
+      inversion_clear H0.
+      - pfold. constructor.
+      - pfold. constructor.
+        + reflexivity.
+        + intros. right. eapply rec.
+          destruct (H x0) as [ | [] ]. apply H0.
+      - pfold. constructor.
+        destruct H as [ | [] ].
+        right. apply rec; auto.
+    Qed.
 
-
-
-
-  Global Instance Transitive_Eff_eq {T} : Transitive (@Eff_eq T).
-  Admitted.
+  End Eff_sim.
 
   Global Instance Proper_Eff_eq_impl {T}
   : Proper (@Eff_eq T --> @Eff_eq T ==> Basics.impl) (@Eff_eq _).
@@ -395,33 +518,6 @@ Section Eff.
          split; eapply Proper_Eff_eq_impl;
            solve [ assumption | symmetry; assumption ].
   Defined.
-
-  Global Instance Reflexive_Eff_sim {T} : Reflexive (@Eff_sim T).
-  Admitted.
-  Global Instance Symmetric_Eff_sim {T} : Symmetric (@Eff_sim T).
-  Admitted.
-  Global Instance Transitive_Eff_sim {T} : Transitive (@Eff_sim T).
-  Admitted.
-
-  Global Instance Subrelation_Eff_sim_Eff_eq {T}
-  : subrelation (@Eff_eq T) (@Eff_sim T).
-  Admitted.
-
-  Global Instance Proper_bind' {T U}
-  : Proper (pointwise_relation T (@Eff_eq U) ==> @Eff_eq T ==> (@Eff_eq U)) bind'.
-  Admitted.
-
-  Global Instance Proper_bind {T U}
-  : Proper (@Eff_eq T ==> pointwise_relation T (@Eff_eq U) ==> (@Eff_eq U)) bind.
-  Admitted.
-
-  Global Instance Proper_delayBind {T U}
-  : Proper (@Eff_eq T ==> pointwise_relation T (@Eff_eq U) ==> (@Eff_eq U)) delayBind.
-  Admitted.
-
-  Global Instance Proper_delay {T}
-  : Proper (@Eff_eq T ==> @Eff_eq T) delay.
-  Admitted.
 
 End Eff.
 
@@ -444,13 +540,13 @@ Section interp.
 
   Context {eff eff' : Type -> Type}.
 
-  Variable do : forall {T}, eff T -> Eff eff' T.
+  Variable eval : forall {T}, eff T -> Eff eff' T.
 
   CoFixpoint interp {T} (c : Eff eff T) : Eff eff' T :=
     match getEff c with
     | retF x => ret x
     | interactF e k =>
-      delayBind (do _ e) (fun x => interp (k x))
+      delayBind (eval _ e) (fun x => interp (k x))
     | delayF x => delay (interp x)
     end.
 
@@ -465,12 +561,12 @@ Section interp.
 
   Lemma interp_interact : forall {a b} (e : eff a) (k : a -> Eff eff b),
       interp (interact e k) =
-      delayBind (do _ e) (fun x => interp (k x)).
+      delayBind (eval _ e) (fun x => interp (k x)).
   Proof.
     intros.
     rewrite getEff_eq. symmetry. rewrite getEff_eq. symmetry.
     simpl.
-    destruct (delayBind (do a e) (fun x : a => interp (k x))).
+    destruct (delayBind (eval a e) (fun x : a => interp (k x))).
     reflexivity.
   Defined.
 
@@ -481,6 +577,66 @@ Section interp.
     rewrite getEff_eq. symmetry. rewrite getEff_eq. symmetry.
     reflexivity.
   Defined.
+
+  Theorem interp_bind : forall {T U} (c : Eff _ T) (k : T -> Eff _ U),
+      Eff_eq _ (interp (bind c k))
+             (bind (interp c) (fun x => interp (k x))).
+  Proof.
+    pcofix rec.
+    intros.
+    rewrite getEff_eq at 1.
+    rewrite (getEff_eq (bind (interp c) (fun x : T => interp (k x)))).
+    simpl. destruct (getEff c).
+    - simpl. destruct (k t); destruct e; simpl.
+      + pfold. constructor.
+      + eapply paco3_mon.
+        eapply Reflexive_Eff_eq.
+        inversion 1.
+      + eapply paco3_mon.
+        eapply Reflexive_Eff_eq.
+        inversion 1. 
+    - simpl.
+      change (paco3 (Eff_eqF eff') r U
+    match
+      match
+        delayBind (eval A e)
+          (fun x : A =>
+           interp
+             (bind' k (e0 x)))
+      with
+      | do _ _ y => y
+      end
+    with
+    | retF v => ret v
+    | @interactF _ _ _ A0 e1 k0 => interact e1 k0
+    | delayF k0 => delay k0
+    end
+    match
+      match
+        match
+          match delayBind (eval A e) (fun x : A => interp (e0 x)) with
+          | do _ _ y => y
+          end
+        with
+        | retF x => interp (k x)
+        | @interactF _ _ _ A0 io k' =>
+            interact io
+              (fun x : A0 => bind' (fun x => interp (k x)) (k' x))
+        | delayF f =>
+            delay
+              (bind' (fun x => interp (k x)) f)
+        end
+      with
+      | do _ _ y => y
+      end
+    with
+    | retF v => ret v
+    | @interactF _ _ _ A0 e1 k0 => interact e1 k0
+    | delayF k0 => delay k0
+    end).
+      admit.
+    - admit.
+  Admitted.
 
 End interp.
 
@@ -512,60 +668,6 @@ End inj.
 
 Arguments injL {_} _ {_} _.
 Arguments injR {_ _} _ _.
-
-
-(* the (value-level) fixpoint effect, this implements value-recursion *)
-Section Fix.
-
-  Variable a : Type.
-
-  Inductive fixpoint : Type -> Type :=
-  | rec : fixpoint a.
-
-  Variable eff : Type -> Type.
-
-  Section mfix.
-    Variable f : Eff (both eff fixpoint) a.
-
-    CoFixpoint finterp {T : Type}
-               (c : Eff (both eff fixpoint) T)
-    : Eff eff T :=
-      match getEff c with
-      | retF x => ret x
-      | interactF (bleft e) k =>
-        interact e (fun x => finterp (k x))
-      | interactF (bright e) k =>
-        delay (finterp (bind' (fun x => k match e with
-                                       | rec => x
-                                       end) f))
-      | delayF x => delay (finterp x)
-      end.
-
-    Definition mfix : Eff eff a := finterp f.
-
-    Definition go (mfix : Eff eff a)
-               T (X : both eff fixpoint T) : Eff eff T :=
-      match X with
-      | bleft e => interact e ret
-      | bright f0 =>
-        match f0 with
-        | rec => mfix
-        end
-      end.
-
-
-    Theorem mfix_unfold :
-      mfix = interp (go mfix) f.
-    Proof. Admitted.
-
-  End mfix.
-
-  Theorem mfix_ret : forall v, mfix (ret v) = ret v.
-  Proof. Admitted.
-
-End Fix.
-
-Arguments mfix {_} _.
 
 Section FixF.
   Variable eff : Type -> Type.
@@ -602,30 +704,146 @@ Section FixF.
       | bleft e => interact e ret
       | bright f0 =>
         match f0 with
-        | callF x => mfixF x
+        | callF x => delay (mfixF x)
         end
       end.
 
-    Theorem mfixF_unfold : forall x,
-      Eff_eq _ (mfixF x) (interp goF (f x)).
+    Theorem finterpF_bind : forall {T U} (c : Eff _ T) (k : T -> Eff _ U),
+        Eff_eq _ (finterpF (bind c k))
+               (bind (finterpF c) (fun x => finterpF (k x))).
     Proof.
-      unfold mfixF.
+      pcofix rec.
       intros.
-      generalize (f x).
-      cofix rec.
-      intro. rewrite getEff_eq. symmetry. rewrite getEff_eq. symmetry.
-      simpl.
-      destruct (getEff e); simpl.
-      - reflexivity.
-      - destruct b0; simpl.
+      pfold.
+      rewrite getEff_eq at 1.
+      rewrite (getEff_eq (bind (finterpF c) (fun x : T => finterpF (k x)))).
+      simpl. destruct (getEff c).
+      - simpl. destruct (k t); destruct e; simpl.
         + constructor.
-          intro. rewrite bind_ret.
-          rewrite rec. reflexivity.
-
-
+        + destruct b0; simpl.
+          constructor.
+          * intros. left.
+            eapply paco3_mon; [ eapply Reflexive_Eff_eq | ].
+            inversion 1.
+          * destruct f0.
+            simpl. constructor.
+            left; eapply paco3_mon.
+            eapply Reflexive_Eff_eq. inversion 1.
+        + constructor.
+          left. eapply paco3_mon; [ eapply Reflexive_Eff_eq | inversion 1 ].
+      - simpl. destruct b0; simpl.
+        + constructor. intros.
+          match goal with
+          | |- _ _ _ _ (finterpF (?X _)) (?Y _) =>
+            change X with (bind' k) ;
+            change Y with (bind' (fun x0 => finterpF (k x0)))
+          end.
+          right.
+          apply (rec U _ (e x) k).
+        + destruct f0. simpl.
+          constructor.
+          match goal with
+          | |- _ _ (finterpF (bind _ (fun x => ?X _))) (?Y _) =>
+            change X with (bind' k) ;
+            change Y with (bind' (fun x0 => finterpF (k x0)))
+          end.
+          admit. (* I need a stronger inductive hypothesis... *)
+      - simpl. constructor.
+        right. eapply (rec _ _ e k).
     Admitted.
 
   End mfix.
+
+  Theorem finterpF_interp_goF : forall {T} f (x : Eff _ T),
+      Eff_eq _ (finterpF f x) (interp (goF f) x).
+  Proof.
+(*
+    unfold mfixF.
+    pcofix rec.
+    intros.
+    pfold.
+    rewrite getEff_eq at 1. rewrite (getEff_eq (interp (goF f) x)).
+    simpl.
+    destruct (getEff x).
+    - simpl. constructor.
+    - destruct b0; simpl.
+      + constructor; intros.
+        rewrite bind_ret.
+        match goal with
+        | |- _ _ _ _ (?Y _ _) (?X _ _) =>
+          change X with (@interp _ _ (goF f));
+          change Y with (@finterpF f)
+        end.
+        right. eapply rec.
+      + destruct f0.
+        match goal with
+        | |- context [ delay (?X _ _) ] =>
+          change X with (@finterpF f)
+        end.
+        match goal with
+        | |- context [ ?X _ _ ] =>
+          change X with (@interp _ _ (goF f))
+        end.
+        simpl. constructor.
+        unfold mfixF.
+        left. 
+
+
+        intros.
+        generalize (f x).
+        cofix rec.
+        intro. rewrite getEff_eq. symmetry. rewrite getEff_eq. symmetry.
+        simpl.
+        destruct (getEff e); simpl.
+    - reflexivity.
+    - destruct b0; simpl.
+      + constructor.
+        intro. rewrite bind_ret.
+        rewrite rec. reflexivity.
+
+*)
+  Admitted.
+
+
+  Theorem mfixF_unfold : forall f x,
+      Eff_eq _ (mfixF f x) (interp (goF f) (f x)).
+  Proof.
+(*
+    unfold mfixF.
+    pcofix rec.
+    intros.
+    pfold.
+    rewrite getEff_eq at 1. rewrite (getEff_eq (interp (goF f) (f x))).
+    simpl.
+    destruct (getEff (f x)).
+    - simpl. constructor.
+    - destruct b0; simpl.
+      + constructor; intros.
+        rewrite bind_ret.
+        match goal with
+        | |- _ _ _ _ (?Y _ _) (?X _ _) =>
+          change X with (@interp _ _ (goF f));
+          change Y with (@finterpF f)
+        end.
+        right
+
+
+
+        intros.
+        generalize (f x).
+        cofix rec.
+        intro. rewrite getEff_eq. symmetry. rewrite getEff_eq. symmetry.
+        simpl.
+        destruct (getEff e); simpl.
+    - reflexivity.
+    - destruct b0; simpl.
+      + constructor.
+        intro. rewrite bind_ret.
+        rewrite rec. reflexivity.
+*)
+  Admitted.
+
+
 
   Theorem mfixF_ret : forall v x,
       mfixF (fun x => ret (v x)) x = ret (v x).
@@ -633,7 +851,9 @@ Section FixF.
 
 End FixF.
 
+Arguments mfixF {_} [_] _ _ _.
 Arguments callF {_ _} _.
+
 
 Section mutual_fixpoints.
   Record ftype : Type :=
@@ -670,21 +890,15 @@ Section mutual_fixpoints.
   Defined.
 
 
-  Definition mmfixF : ftypeD eff (fin_get which).
-  refine (fun x =>
-            let fs := fs _ recs in
-            @mfixF eff mdom mcodom
-                   (fun '(@existT _ _ tagF x) => @fin_get_hlist _ _ _ fs tagF x)
-                   (@existT _ _ which x)
-         ).  Show Proof.
-  Defined.
+  Definition mmfixF : ftypeD eff (fin_get which) :=
+    fun x =>
+      let fs := fs _ recs in
+      @mfixF eff mdom mcodom
+             (fun '(@existT _ _ tagF x) => @fin_get_hlist _ _ _ fs tagF x)
+             (@existT _ _ which x).
 
 End mutual_fixpoints.
 
-(* the empty effect *)
-Section nothingE.
-  Inductive nothing : Type -> Type := .
-End nothingE.
 
 (* the output effect *)
 Section outputE.
@@ -695,9 +909,8 @@ End outputE.
 
 Arguments outE {_} _.
 
-
 (* mfix Demo *)
-Arguments mfixF {_} [_] _ _ _.
+
 Definition count_up : Eff (out nat) False :=
   mfixF (fun _ : nat => False)
         (fun n : nat =>
@@ -718,9 +931,27 @@ Arguments Put {_} _.
 
 
 (** Testing *)
-Definition trial : Eff nothing False :=
-  mfix nothing (interact (bright (rec False)) ret).
+Arguments mfixF {_ _} _ _ _.
+Arguments fixpointF {_} _ _.
+Arguments injL {_ _ _  } _.
 
+Definition DO {eff a} (c : eff a) : Eff eff a :=
+  interact c ret.
+
+Definition spin {eff} {a} : Eff eff a :=
+  mfixF (fun _ : unit => a)
+        (fun _ : unit => DO (bright (callF tt))) tt.
+
+Notation "x <- e  ;; k" := (bind e (fun x => k)) (at level 30).
+
+Definition until {eff} (e : Eff eff bool) : Eff eff unit :=
+  mfixF (fun _ : unit => unit)
+        (fun _ => test <- injL e ;;
+                if test
+                then DO (bright (callF tt))
+                else ret tt) tt.
+
+(*
 Section diverge.
   Context {eff : Type -> Type}.
   Variable t : Type.
@@ -762,3 +993,4 @@ Goal Eff_eq _ trial (diverge _).
   change (mfix nothing (interact (bright (Top.rec False)) ret)) with trial.
   rewrite rec. rewrite delayBind_diverge. rewrite bind_diverge. reflexivity.
 Admitted. (* need to do paco reasoning? *)
+*)

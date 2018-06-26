@@ -1,6 +1,6 @@
 PROJECT_NAME:=coq-interaction-trees
 
-all: theories examples
+all: theories
 
 theories: Makefile.coq
 	$(MAKE) -f Makefile.coq
