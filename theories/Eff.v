@@ -10,6 +10,27 @@ Require Import ExtLib.Data.HList.
 Require Import ExtLib.Data.Fin.
 Require Import Interaction.FinGet.
 
+Section paco_facts.
+
+  Global Instance Subrelation_paco3_ext
+  : forall {T U V} (r r' : forall x : T, U x -> U x -> Prop) f,
+      monotone3 f ->
+      (forall Z, subrelation (r Z) (r' Z)) -> subrelation (paco3 f r _) (paco3 f r' V).
+  Proof. intros. red. intros.
+         eapply paco3_mon. eapply H1. apply H0.
+  Qed.
+
+  Lemma upaco3_mon :
+    forall (T0 : Type) (T1 : T0 -> Type) (T2 : forall x0 : T0, T1 x0 -> Type)
+      (gf : rel3 T0 T1 T2 -> rel3 T0 T1 T2), monotone3 (upaco3 gf).
+  Proof. red. intros.
+         destruct IN.
+         + left. eapply paco3_mon; eauto.
+         + right; eauto.
+  Qed.
+
+End paco_facts.
+
 Section Eff.
   Polymorphic Universes u u'.
   Variable eff : Type@{u} -> Type@{u'}.
@@ -18,7 +39,10 @@ Section Eff.
   | retF (_ : T)
   | interactF {A : Type@{u}} (_ : eff A) (_ : A -> Eff)
   | delayF (_ : Eff).
-  (* todo: does it make sense for `delay` to be in the definition of `Eff` ? *)
+  (* todo: does it make sense for `delay` to be in the definition of `Eff` ?
+   * > the implementation of interp requires delay in cases where it doesn't
+   *   return something guarded.
+   *)
 
   Arguments retF {_ _} _.
   Arguments interactF {_ _ _} _ _.
@@ -91,7 +115,7 @@ Section Eff.
     reflexivity.
   Defined.
 
-  Lemma bind_interactd : forall {T U V} (e : eff T) (k' : T -> Eff U) (k : U -> Eff V),
+  Lemma bind_interact : forall {T U V} (e : eff T) (k' : T -> Eff U) (k : U -> Eff V),
       bind (interact e k') k = interact e (fun x => bind (k' x) k).
   Proof.
     intros. rewrite getEff_eq at 1. simpl.
@@ -275,8 +299,8 @@ Section Eff.
       pfold. constructor. left; eapply H.
     Defined.
 
-    Theorem bind_bind : forall {T U V} c (k : T -> Eff U) (k' : U -> Eff V),
-        Eff_eq (bind (bind c k) k')(bind c (fun x => bind (k x) k')).
+    Lemma bind_bind_gen : forall r {T U V} c (k : T -> Eff U) (k' : U -> Eff V),
+        paco3 Eff_eqF r _ (bind (bind c k) k')(bind c (fun x => bind (k x) k')).
     Proof.
       pcofix rec.
       intros.
@@ -295,6 +319,12 @@ Section Eff.
         eapply (rec _ _ _ (e0 x) k k').
       - simpl. pfold. constructor.
         right. eapply (rec _ _ _ e k k').
+    Defined.
+
+    Theorem bind_bind : forall {T U V} c (k : T -> Eff U) (k' : U -> Eff V),
+        Eff_eq (bind (bind c k) k') (bind c (fun x => bind (k x) k')).
+    Proof.
+      intros; eapply bind_bind_gen.
     Defined.
 
   End Eff_eq.
@@ -578,6 +608,8 @@ Section interp.
     reflexivity.
   Defined.
 
+
+
   Theorem interp_bind : forall {T U} (c : Eff _ T) (k : T -> Eff _ U),
       Eff_eq _ (interp (bind c k))
              (bind (interp c) (fun x => interp (k x))).
@@ -594,7 +626,7 @@ Section interp.
         inversion 1.
       + eapply paco3_mon.
         eapply Reflexive_Eff_eq.
-        inversion 1. 
+        inversion 1.
     - simpl.
       change (paco3 (Eff_eqF eff') r U
     match
@@ -634,8 +666,25 @@ Section interp.
     | @interactF _ _ _ A0 e1 k0 => interact e1 k0
     | delayF k0 => delay k0
     end).
-      admit.
-    - admit.
+      destruct (eval A e). destruct e1; simpl.
+      + pfold. constructor.
+        right. eapply (rec _ _ (e0 a) k).
+      + pfold. constructor.
+        intros.
+        (* here I need to appeal to the associativity of bind to pull
+         * off the head `bind (e2 x)` and use the inductive hypothesis
+         * to prove the rest. However, I don't know that `r` is transitive
+         * so I can't appeal to transitivity.
+         *)
+        change (bind' (fun x0 : T => interp (k x0))
+       (bind (e2 x) (fun x0 : A => interp (e0 x0))))
+          with (bind (bind (e2 x) (fun x0 => interp (e0 x0))) (fun x0 => interp (k x0))).
+        admit.
+      + pfold. constructor.
+        (* this is the same problem *)
+        admit.
+    - simpl. pfold. constructor.
+      right. eapply (rec _ _ e k).
   Admitted.
 
 End interp.
@@ -786,7 +835,7 @@ Section FixF.
         end.
         simpl. constructor.
         unfold mfixF.
-        left. 
+        left.
 
 
         intros.
