@@ -140,7 +140,22 @@ Section Eff.
     intros. rewrite getEff_eq at 1. reflexivity.
   Defined.
 
+  Fixpoint Fn {A:Type} (step: A -> A)  (f0 : A) (n:nat) :=
+    match n with
+    | O => f0 
+    | S n => step (Fn step f0 n)
+    end.
+
+  (* TODO: generalize for hetero relations *)
+  Definition RTopN {A:Type} (Rs: (A -> A->Prop)->(A -> A->Prop)) (n:nat) :=
+    Fn Rs (fun _ _=> True) (* Top *) n.
   (* Equivalence, including stuttering steps *)
+
+  (* greatest fixpoint if F is continuous *)
+  Definition GFPC {A:Type} (Rs: (A -> A->Prop)->(A -> A->Prop))  (a1 a2: A): Prop:=
+   forall n, RTopN Rs n a1 a2.
+  (* Equivalence, including stuttering steps *)
+  
   Section Eff_eq.
 
     Inductive Eff_eqF (eff_eq : forall T, Eff T -> Eff T -> Prop) {T}
@@ -151,6 +166,8 @@ Section Eff.
         Eff_eqF eff_eq (interact e k1) (interact e k2)
     | eq_delay : forall a b, eff_eq _ a b ->
                         Eff_eqF eff_eq (delay a) (delay b).
+
+    Definition Eff_eq_ind := GFPC Eff_eqF.
 
     Lemma Eff_eqF_mon: monotone3 Eff_eqF.
     Proof.
