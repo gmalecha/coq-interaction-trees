@@ -147,13 +147,14 @@ Section Eff.
     end.
 
   (* TODO: generalize for hetero relations *)
-  Definition RTopN {A:Type} (Rs: (A -> A->Prop)->(A -> A->Prop)) (n:nat) :=
-    Fn Rs (fun _ _=> True) (* Top *) n.
+  Definition RTopN {A:Type->Type} (Rs: (forall T, A T-> A T->Prop)->(forall T, A T -> A T->Prop)) (n:nat) :=
+    Fn Rs (fun _ _ _ => True) (* Top *) n.
   (* Equivalence, including stuttering steps *)
 
   (* greatest fixpoint if F is continuous *)
-  Definition GFPC {A:Type} (Rs: (A -> A->Prop)->(A -> A->Prop))  (a1 a2: A): Prop:=
-   forall n, RTopN Rs n a1 a2.
+  Definition GFPC {A:Type->Type} (Rs: (forall T, A T-> A T->Prop)->(forall T, A T -> A T->Prop))
+    T (a1 a2: A T): Prop:=
+   forall n, RTopN Rs n _ a1 a2.
   (* Equivalence, including stuttering steps *)
   
   Section Eff_eq.
@@ -176,9 +177,45 @@ Section Eff.
     Qed.
     Hint Resolve Eff_eqF_mon : paco.
 
+   CoInductive Eff_eq_coind  {T}
+     : Eff T -> Eff T -> Prop :=
+   | cstep: forall t1 t2, Eff_eqF (@Eff_eq_coind) t1 t2
+                     -> Eff_eq_coind t1 t2.
+
+   Require Import Coq.Logic.Eqdep. (* imports the UIP axiom *)
+   
+ (* the other direction is guaranteed to hold. this direction only holds
+if the greatest fixpoint is reached by interating over the natural numbers  *)
+ Lemma ind_implies_coind  {T} (t1 t2: Eff T):
+   Eff_eq_ind _ t1 t2 -> Eff_eq_coind t1 t2.
+ Proof using.
+   intros Hi.
+   hnf in Hi. revert dependent T. cofix.
+   intros.
+   constructor.
+   pose proof (Hi (1)) as H1i.
+   inversion H1i.
+-  subst. constructor.
+-  subst. constructor. clear H.
+   intros ?. apply ind_implies_coind.
+   intros ?. specialize (Hi (S n)).
+   inversion Hi.  subst.
+   apply inj_pair2 in H1. (* uses the UIP axiom! *)
+   apply inj_pair2 in H2.
+   apply inj_pair2 in H3.
+   apply inj_pair2 in H4.
+   subst. clear H3. hnf. apply H0.
+- subst. 
+   subst. constructor.  clear H.
+   apply ind_implies_coind.
+   intros ?. specialize (Hi (S n)).
+   inversion Hi.  subst. eauto.
+ Qed.
+ 
     Definition Eff_eq : forall {T}, Eff T -> Eff T -> Prop :=
       paco3 Eff_eqF bot3.
 
+    
     Global Instance Reflexive_Eff_eq {T} : Reflexive (@Eff_eq T).
     Proof.
       red.
