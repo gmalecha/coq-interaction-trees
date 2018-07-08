@@ -9,6 +9,7 @@ Require Import Paco.paco3.
 Require Import ExtLib.Data.HList.
 Require Import ExtLib.Data.Fin.
 Require Import Interaction.FinGet.
+Require Import ExtLib.Structures.Monad.
 
 Section paco_facts.
 
@@ -60,7 +61,7 @@ Section Eff.
     | do y => y
     end.
 
-  Definition ret {T : Type@{u}} (x : T) : Eff T :=
+  Definition Pure {T : Type@{u}} (x : T) : Eff T :=
     do (retF x).
 
   Definition interact {T U : Type@{u}} (x : eff T) (k : T -> Eff U) : Eff U :=
@@ -71,7 +72,7 @@ Section Eff.
 
   Theorem getEff_eq : forall {T : Type@{u}} (x : Eff T),
       x = match getEff x with
-          | retF v => ret v
+          | retF v => Pure v
           | interactF e k => interact e k
           | delayF k => delay k
           end.
@@ -79,63 +80,63 @@ Section Eff.
     destruct x; destruct e; reflexivity.
   Defined.
 
-  Section bind.
+  Section Bind.
     Context {A B : Type@{u}} (k : A -> Eff B).
 
-    CoFixpoint bind' (f : Eff A) : Eff B :=
+    CoFixpoint Bind' (f : Eff A) : Eff B :=
       match getEff f with
       | retF x => k x
-      | interactF io k' => interact io (fun x => bind' (k' x))
-      | delayF f => delay (bind' f)
+      | interactF io k' => interact io (fun x => Bind' (k' x))
+      | delayF f => delay (Bind' f)
       end.
-  End bind.
+  End Bind.
 
-  Definition bind {A B : Type@{u}} (f : Eff A) (k : A -> Eff B) : Eff B :=
-    bind' k f.
+  Definition Bind {A B : Type@{u}} (f : Eff A) (k : A -> Eff B) : Eff B :=
+    Bind' k f.
 
   Definition delayBind {t u : Type@{u}} (e : Eff t) (k : t -> Eff u) : Eff u :=
     match getEff e with
     | retF v => delay (k v)
     | interactF e k' =>
-      interact e (fun x => bind (k' x) k)
-    | delayF v => delay (bind v k)
+      interact e (fun x => Bind (k' x) k)
+    | delayF v => delay (Bind v k)
     end.
 
   Lemma bind_ret : forall {T U} (x : T) (k : T -> Eff U),
-      bind (ret x) k = k x.
+      Bind (Pure x) k = k x.
   Proof.
     intros. rewrite getEff_eq at 1. simpl.
     destruct (k x); destruct e; reflexivity.
   Defined.
 
   Lemma bind_delay : forall {T U} (x : Eff T) (k : T -> Eff U),
-      bind (delay x) k = delay (bind x k).
+      Bind (delay x) k = delay (Bind x k).
   Proof.
     intros. rewrite getEff_eq at 1. simpl.
     reflexivity.
   Defined.
 
   Lemma bind_interact : forall {T U V} (e : eff T) (k' : T -> Eff U) (k : U -> Eff V),
-      bind (interact e k') k = interact e (fun x => bind (k' x) k).
+      Bind (interact e k') k = interact e (fun x => Bind (k' x) k).
   Proof.
     intros. rewrite getEff_eq at 1. simpl.
     reflexivity.
   Defined.
 
   Lemma delayBind_ret : forall {T U} v (k : T -> Eff U),
-      delayBind (ret v) k = delay (k v).
+      delayBind (Pure v) k = delay (k v).
   Proof.
     intros. rewrite getEff_eq at 1. reflexivity.
   Defined.
 
   Lemma delayBind_delay : forall {T U} (v : Eff T) (k : T -> Eff U),
-      delayBind (delay v) k = delay (bind v k).
+      delayBind (delay v) k = delay (Bind v k).
   Proof.
     intros. rewrite getEff_eq at 1. reflexivity.
   Defined.
 
   Lemma delayBind_interact : forall {T U V} e (k : T -> Eff U) (k' : U -> Eff V),
-      delayBind (interact e k) k' = interact e (fun x => bind (k x) k').
+      delayBind (interact e k) k' = interact e (fun x => Bind (k x) k').
   Proof.
     intros. rewrite getEff_eq at 1. reflexivity.
   Defined.
@@ -145,7 +146,7 @@ Section Eff.
 
     Inductive Eff_eqF (eff_eq : forall T, Eff T -> Eff T -> Prop) {T}
     : Eff T -> Eff T -> Prop :=
-    | eq_ret : forall t, Eff_eqF eff_eq (ret t) (ret t)
+    | eq_ret : forall t, Eff_eqF eff_eq (Pure t) (Pure t)
     | eq_interact : forall a (e : eff a) k1 k2,
         (forall x, eff_eq _ (k1 x) (k2 x)) ->
         Eff_eqF eff_eq (interact e k1) (interact e k2)
@@ -231,7 +232,7 @@ Section Eff.
 
     Global Instance Proper_bind' {T U}
     : Proper (pointwise_relation T (@Eff_eq U) ==> @Eff_eq T ==> (@Eff_eq U))
-             bind'.
+             Bind'.
     Proof.
       red. red. red.
       pcofix rec; intros.
@@ -266,7 +267,7 @@ Section Eff.
 
     Global Instance Proper_bind {T U}
     : Proper (@Eff_eq T ==> pointwise_relation T (@Eff_eq U) ==> (@Eff_eq U))
-             bind.
+             Bind.
     Proof.
       do 3 red. intros. eapply Proper_bind'; eauto.
     Defined.
@@ -300,7 +301,7 @@ Section Eff.
     Defined.
 
     Lemma bind_bind_gen : forall r {T U V} c (k : T -> Eff U) (k' : U -> Eff V),
-        paco3 Eff_eqF r _ (bind (bind c k) k')(bind c (fun x => bind (k x) k')).
+        paco3 Eff_eqF r _ (Bind (Bind c k) k')(Bind c (fun x => Bind (k x) k')).
     Proof.
       pcofix rec.
       intros.
@@ -322,7 +323,7 @@ Section Eff.
     Defined.
 
     Theorem bind_bind : forall {T U V} c (k : T -> Eff U) (k' : U -> Eff V),
-        Eff_eq (bind (bind c k) k') (bind c (fun x => bind (k x) k')).
+        Eff_eq (Bind (Bind c k) k') (Bind c (fun x => Bind (k x) k')).
     Proof.
       intros; eapply bind_bind_gen.
     Defined.
@@ -349,7 +350,7 @@ Section Eff.
       Variable (eff_sim : forall T, Eff T -> Eff T -> Prop).
 
       Inductive Eff_simF {T} : Eff T -> Eff T -> Prop :=
-      | sim_ret : forall t, Eff_simF (ret t) (ret t)
+      | sim_ret : forall t, Eff_simF (Pure t) (Pure t)
       | sim_interact : forall a (e1 e2 : eff a) k1 k2,
           rel_eff _ e1 e2 ->
           (forall x, eff_sim _ (k1 x) (k2 x)) ->
@@ -552,19 +553,36 @@ Section Eff.
 End Eff.
 
 
-Arguments bind {_ _ _} _ _.
-Arguments bind' {_ _ _} _ _.
+Arguments Bind {_ _ _} _ _.
+Arguments Bind' {_ _ _} _ _.
 Arguments delayBind {_ _ _} _ _.
 Arguments interactF {_ _ _ _} _ _.
 Arguments interact {_ _ _} _ _.
 Arguments retF {_ _ _} _.
-Arguments ret {_ _} _.
+Arguments Pure {_ _} _.
 Arguments delayF {_ _ _} _.
 Arguments delay {_ _} _.
 Arguments getEff {_ _} _.
 Arguments getEff_eq {_ _} _.
 
 (** Interpretation of effects *)
+
+Section interpState.
+
+  Context {eff eff' : Type -> Type}.
+  Context {st : Type}.
+
+  Variable eval : forall {T}, eff T -> st -> Eff eff' (st * T).
+
+  CoFixpoint interpM {T} (c : Eff eff T) (s : st) : Eff eff' (st * T) :=
+    match getEff c with
+    | retF x => Pure (s, x)
+    | interactF e k =>
+      delay (Bind' (fun sx => interpM (k (snd sx)) (fst sx)) (eval _ e s))
+    | delayF x => delay (interpM x s)
+    end.
+
+End interpState.
 
 Section interp.
 
@@ -574,18 +592,18 @@ Section interp.
 
   CoFixpoint interp {T} (c : Eff eff T) : Eff eff' T :=
     match getEff c with
-    | retF x => ret x
+    | retF x => Pure x
     | interactF e k =>
       delayBind (eval _ e) (fun x => interp (k x))
     | delayF x => delay (interp x)
     end.
 
   Lemma interp_ret : forall {T} (v : T),
-      interp (ret v) = ret v.
+      interp (Pure v) = Pure v.
   Proof.
     intros.
     rewrite getEff_eq.
-    rewrite (getEff_eq (interp (ret v))).
+    rewrite (getEff_eq (interp (Pure v))).
     reflexivity.
   Defined.
 
@@ -611,13 +629,13 @@ Section interp.
 
 
   Theorem interp_bind : forall {T U} (c : Eff _ T) (k : T -> Eff _ U),
-      Eff_eq _ (interp (bind c k))
-             (bind (interp c) (fun x => interp (k x))).
+      Eff_eq _ (interp (Bind c k))
+             (Bind (interp c) (fun x => interp (k x))).
   Proof.
     pcofix rec.
     intros.
     rewrite getEff_eq at 1.
-    rewrite (getEff_eq (bind (interp c) (fun x : T => interp (k x)))).
+    rewrite (getEff_eq (Bind (interp c) (fun x : T => interp (k x)))).
     simpl. destruct (getEff c).
     - simpl. destruct (k t); destruct e; simpl.
       + pfold. constructor.
@@ -634,12 +652,12 @@ Section interp.
         delayBind (eval A e)
           (fun x : A =>
            interp
-             (bind' k (e0 x)))
+             (Bind' k (e0 x)))
       with
       | do _ _ y => y
       end
     with
-    | retF v => ret v
+    | retF v => Pure v
     | @interactF _ _ _ A0 e1 k0 => interact e1 k0
     | delayF k0 => delay k0
     end
@@ -653,16 +671,16 @@ Section interp.
         | retF x => interp (k x)
         | @interactF _ _ _ A0 io k' =>
             interact io
-              (fun x : A0 => bind' (fun x => interp (k x)) (k' x))
+              (fun x : A0 => Bind' (fun x => interp (k x)) (k' x))
         | delayF f =>
             delay
-              (bind' (fun x => interp (k x)) f)
+              (Bind' (fun x => interp (k x)) f)
         end
       with
       | do _ _ y => y
       end
     with
-    | retF v => ret v
+    | retF v => Pure v
     | @interactF _ _ _ A0 e1 k0 => interact e1 k0
     | delayF k0 => delay k0
     end).
@@ -676,7 +694,7 @@ Section interp.
          * to prove the rest. However, I don't know that `r` is transitive
          * so I can't appeal to transitivity.
          *)
-        change (bind' (fun x0 : T => interp (k x0))
+        change (Bind' (fun x0 : T => interp (k x0))
        (bind (e2 x) (fun x0 : A => interp (e0 x0))))
           with (bind (bind (e2 x) (fun x0 => interp (e0 x0))) (fun x0 => interp (k x0))).
         admit.
@@ -708,10 +726,10 @@ Section inj.
   Variable eff eff' : Type -> Type.
 
   Definition injL {T} (c : Eff eff T) : Eff (both eff eff') T :=
-    interp (fun _ e => interact (bleft e) (@ret _ _)) c.
+    interp (fun _ e => interact (bleft e) (@Pure _ _)) c.
 
   Definition injR {T} (c : Eff eff' T) : Eff (both eff eff') T :=
-    interp (fun _ e => interact (bright e) (@ret _ _)) c.
+    interp (fun _ e => interact (bright e) (@Pure _ _)) c.
 
 End inj.
 
@@ -734,13 +752,13 @@ Section FixF.
                (c : Eff (both eff fixpointF) T)
     : Eff eff T :=
       match getEff c with
-      | retF x => ret x
+      | retF x => Pure x
       | interactF (bleft e) k =>
         interact e (fun x => finterpF (k x))
       | interactF (bright e) k =>
         match e in fixpointF X return (X -> _) -> _ with
         | callF x => fun k =>
-          delay (finterpF (bind (f x) k))
+          delay (finterpF (Bind (f x) k))
         end k
       | delayF x => delay (finterpF x)
       end.
@@ -750,7 +768,7 @@ Section FixF.
 
     Definition goF T (X : both eff fixpointF T) : Eff eff T :=
       match X with
-      | bleft e => interact e ret
+      | bleft e => interact e Pure
       | bright f0 =>
         match f0 with
         | callF x => delay (mfixF x)
@@ -758,14 +776,14 @@ Section FixF.
       end.
 
     Theorem finterpF_bind : forall {T U} (c : Eff _ T) (k : T -> Eff _ U),
-        Eff_eq _ (finterpF (bind c k))
-               (bind (finterpF c) (fun x => finterpF (k x))).
+        Eff_eq _ (finterpF (Bind c k))
+               (Bind (finterpF c) (fun x => finterpF (k x))).
     Proof.
       pcofix rec.
       intros.
       pfold.
       rewrite getEff_eq at 1.
-      rewrite (getEff_eq (bind (finterpF c) (fun x : T => finterpF (k x)))).
+      rewrite (getEff_eq (Bind (finterpF c) (fun x : T => finterpF (k x)))).
       simpl. destruct (getEff c).
       - simpl. destruct (k t); destruct e; simpl.
         + constructor.
@@ -784,17 +802,17 @@ Section FixF.
         + constructor. intros.
           match goal with
           | |- _ _ _ _ (finterpF (?X _)) (?Y _) =>
-            change X with (bind' k) ;
-            change Y with (bind' (fun x0 => finterpF (k x0)))
+            change X with (Bind' k) ;
+            change Y with (Bind' (fun x0 => finterpF (k x0)))
           end.
           right.
           apply (rec U _ (e x) k).
         + destruct f0. simpl.
           constructor.
           match goal with
-          | |- _ _ (finterpF (bind _ (fun x => ?X _))) (?Y _) =>
-            change X with (bind' k) ;
-            change Y with (bind' (fun x0 => finterpF (k x0)))
+          | |- _ _ (finterpF (Bind _ (fun x => ?X _))) (?Y _) =>
+            change X with (Bind' k) ;
+            change Y with (Bind' (fun x0 => finterpF (k x0)))
           end.
           admit. (* I need a stronger inductive hypothesis... *)
       - simpl. constructor.
@@ -895,7 +913,7 @@ Section FixF.
 
 
   Theorem mfixF_ret : forall v x,
-      mfixF (fun x => ret (v x)) x = ret (v x).
+      mfixF (fun x => Pure (v x)) x = Pure (v x).
   Proof. Admitted.
 
 End FixF.
@@ -935,7 +953,7 @@ Section mutual_fixpoints.
            (bright
               (callF
                  (existT (fun x3 : fin (length ts) => dom (fin_get x3)) x1 x2)))
-           ret) x0 e) (hlist_fins ts)).
+           Pure) x0 e) (hlist_fins ts)).
   Defined.
 
 
@@ -964,7 +982,7 @@ Definition count_up : Eff (out nat) False :=
   mfixF (fun _ : nat => False)
         (fun n : nat =>
            interact (bleft (outE n))
-                    (fun _ : nat => interact (bright (callF (n + 1))) ret)) 0.
+                    (fun _ : nat => interact (bright (callF (n + 1))) Pure)) 0.
 
 (* the state effect *)
 Section stateE.
@@ -985,20 +1003,20 @@ Arguments fixpointF {_} _ _.
 Arguments injL {_ _ _  } _.
 
 Definition DO {eff a} (c : eff a) : Eff eff a :=
-  interact c ret.
+  interact c Pure.
 
 Definition spin {eff} {a} : Eff eff a :=
   mfixF (fun _ : unit => a)
         (fun _ : unit => DO (bright (callF tt))) tt.
 
-Notation "x <- e  ;; k" := (bind e (fun x => k)) (at level 30).
+Notation "x <- e  ;; k" := (Bind e (fun x => k)) (at level 30).
 
 Definition until {eff} (e : Eff eff bool) : Eff eff unit :=
   mfixF (fun _ : unit => unit)
         (fun _ => test <- injL e ;;
                 if test
                 then DO (bright (callF tt))
-                else ret tt) tt.
+                else Pure tt) tt.
 
 (*
 Section diverge.
