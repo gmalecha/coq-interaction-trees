@@ -140,7 +140,23 @@ Section Eff.
     intros. rewrite getEff_eq at 1. reflexivity.
   Defined.
 
+  Fixpoint Fn {A:Type} (step: A -> A)  (f0 : A) (n:nat) :=
+    match n with
+    | O => f0 
+    | S n => step (Fn step f0 n)
+    end.
+
+  (* TODO: generalize for hetero relations *)
+  Definition RTopN {A:Type->Type} (Rs: (forall T, A T-> A T->Prop)->(forall T, A T -> A T->Prop)) (n:nat) :=
+    Fn Rs (fun _ _ _ => True) (* Top *) n.
   (* Equivalence, including stuttering steps *)
+
+  (* greatest fixpoint if F is continuous *)
+  Definition GFPC {A:Type->Type} (Rs: (forall T, A T-> A T->Prop)->(forall T, A T -> A T->Prop))
+    T (a1 a2: A T): Prop:=
+   forall n, RTopN Rs n _ a1 a2.
+  (* Equivalence, including stuttering steps *)
+  
   Section Eff_eq.
 
     Inductive Eff_eqF (eff_eq : forall T, Eff T -> Eff T -> Prop) {T}
@@ -152,6 +168,8 @@ Section Eff.
     | eq_delay : forall a b, eff_eq _ a b ->
                         Eff_eqF eff_eq (delay a) (delay b).
 
+    Definition Eff_eq_ind := GFPC Eff_eqF.
+
     Lemma Eff_eqF_mon: monotone3 Eff_eqF.
     Proof.
       red. intros.
@@ -159,9 +177,57 @@ Section Eff.
     Qed.
     Hint Resolve Eff_eqF_mon : paco.
 
+   CoInductive Eff_eq_coind  {T}
+     : Eff T -> Eff T -> Prop :=
+   | cstep: forall t1 t2, Eff_eqF (@Eff_eq_coind) t1 t2
+                     -> Eff_eq_coind t1 t2.
+
+   Require Import Coq.Logic.Eqdep. (* imports the UIP axiom *)
+   
+ Lemma ind_implies_coind  {T} (t1 t2: Eff T):
+   Eff_eq_ind _ t1 t2 -> Eff_eq_coind t1 t2.
+ Proof using.
+   intros Hi.
+   hnf in Hi. revert dependent T. cofix.
+   intros.
+   constructor.
+   pose proof (Hi (1)) as H1i.
+   inversion H1i.
+-  subst. constructor.
+-  subst. constructor. clear H.
+   intros ?. apply ind_implies_coind.
+   intros ?. specialize (Hi (S n)).
+   inversion Hi.  subst.
+   apply inj_pair2 in H1. (* uses the UIP axiom! one way to avoid it is to interact only on data of decidable types *)
+   apply inj_pair2 in H2.
+   apply inj_pair2 in H3.
+   apply inj_pair2 in H4.
+   subst. clear H3. hnf. apply H0.
+- subst. 
+   subst. constructor.  clear H.
+   apply ind_implies_coind.
+   intros ?. specialize (Hi (S n)).
+   inversion Hi.  subst. eauto.
+ Qed.
+ 
+ Lemma coind_implies_ind  {T} (t1 t2: Eff T):
+   Eff_eq_coind t1 t2 -> Eff_eq_ind _ t1 t2.
+ Proof using.
+   intros Hi n. revert dependent T.
+   induction n; intros; [exact I|].
+   hnf. inversion Hi; subst.
+   pose proof Eff_eqF_mon as Hm.
+   hnf in Hm.
+   eapply Hm;[ apply H | ].
+   intros. simpl. 
+   specialize (IHn _ _ _ PR).
+   exact IHn.
+ Qed.
+ 
     Definition Eff_eq : forall {T}, Eff T -> Eff T -> Prop :=
       paco3 Eff_eqF bot3.
 
+    
     Global Instance Reflexive_Eff_eq {T} : Reflexive (@Eff_eq T).
     Proof.
       red.
