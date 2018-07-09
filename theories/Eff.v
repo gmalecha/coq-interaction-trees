@@ -184,8 +184,6 @@ Section Eff.
 
    Require Import Coq.Logic.Eqdep. (* imports the UIP axiom *)
    
- (* the other direction is guaranteed to hold. this direction only holds
-if the greatest fixpoint is reached by interating over the natural numbers  *)
  Lemma ind_implies_coind  {T} (t1 t2: Eff T):
    Eff_eq_ind _ t1 t2 -> Eff_eq_coind t1 t2.
  Proof using.
@@ -200,7 +198,7 @@ if the greatest fixpoint is reached by interating over the natural numbers  *)
    intros ?. apply ind_implies_coind.
    intros ?. specialize (Hi (S n)).
    inversion Hi.  subst.
-   apply inj_pair2 in H1. (* uses the UIP axiom! *)
+   apply inj_pair2 in H1. (* uses the UIP axiom! one way to avoid it is to interact only on data of decidable types *)
    apply inj_pair2 in H2.
    apply inj_pair2 in H3.
    apply inj_pair2 in H4.
@@ -210,6 +208,20 @@ if the greatest fixpoint is reached by interating over the natural numbers  *)
    apply ind_implies_coind.
    intros ?. specialize (Hi (S n)).
    inversion Hi.  subst. eauto.
+ Qed.
+ 
+ Lemma coind_implies_ind  {T} (t1 t2: Eff T):
+   Eff_eq_coind t1 t2 -> Eff_eq_ind _ t1 t2.
+ Proof using.
+   intros Hi n. revert dependent T.
+   induction n; intros; [exact I|].
+   hnf. inversion Hi; subst.
+   pose proof Eff_eqF_mon as Hm.
+   hnf in Hm.
+   eapply Hm;[ apply H | ].
+   intros. simpl. 
+   specialize (IHn _ _ _ PR).
+   exact IHn.
  Qed.
  
     Definition Eff_eq : forall {T}, Eff T -> Eff T -> Prop :=
